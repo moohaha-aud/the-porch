@@ -106,6 +106,9 @@ const BackIcon = (p) => <Icon {...p} d="M19 12H5M12 19l-7-7 7-7" />;
 const GCalIcon = (p) => <Icon {...p} d={<><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h2v2H8z"/></>} />;
 const UsersIcon = (p) => <Icon {...p} d={<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>} />;
 const VoteIcon = (p) => <Icon {...p} d={<><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></>} />;
+const EditIcon = (p) => <Icon {...p} d={<><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></>} />;
+const EyeIcon = (p) => <Icon {...p} d={<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>} />;
+const EyeOffIcon = (p) => <Icon {...p} d={<><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>} />;
 
 // ── Main App ─────────────────────────────────────────────────────────
 export default function App() {
@@ -130,13 +133,20 @@ export default function App() {
   // Delete confirm
   const [confirmDelete, setConfirmDelete] = useState(null);
 
+  // Edit mode state
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editTime, setEditTime] = useState("");
+  const [editLocation, setEditLocation] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+
   // ── Firebase: Subscribe to events in real-time ─────────────────────
   useEffect(() => {
     const eventsRef = ref(db, "events");
     const unsubscribe = onValue(eventsRef, (snapshot) => {
       const val = snapshot.val();
       if (val) {
-        // Convert Firebase object to array, keeping the Firebase key as `id`
         const arr = Object.entries(val).map(([key, ev]) => ({
           ...ev,
           id: key,
@@ -181,6 +191,7 @@ export default function App() {
       notes: formNotes || "",
       createdBy: userName,
       createdAt: Date.now(),
+      published: true,
       rsvps: { [userName]: { name: userName, status: "yes" } },
       activities: {},
     });
@@ -192,6 +203,35 @@ export default function App() {
     await remove(ref(db, `events/${id}`));
     setConfirmDelete(null);
     setCurrentView("list");
+  };
+
+  const togglePublish = async (eventId, currentlyPublished) => {
+    await update(ref(db, `events/${eventId}`), { published: !currentlyPublished });
+  };
+
+  const startEditing = (ev) => {
+    setEditTitle(ev.title);
+    setEditDate(ev.date);
+    setEditTime(ev.time || "");
+    setEditLocation(ev.location || "");
+    setEditNotes(ev.notes || "");
+    setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setEditing(false);
+  };
+
+  const saveEditing = async (eventId) => {
+    if (!editTitle || !editDate) return;
+    await update(ref(db, `events/${eventId}`), {
+      title: editTitle,
+      date: editDate,
+      time: editTime || "",
+      location: editLocation || "",
+      notes: editNotes || "",
+    });
+    setEditing(false);
   };
 
   const rsvp = async (eventId, status) => {
@@ -239,8 +279,10 @@ export default function App() {
   // ── Derived ────────────────────────────────────────────────────────
   const selectedEvent = events.find(e => e.id === selectedId);
   const today = new Date().toISOString().split("T")[0];
-  const upcoming = events.filter(e => e.date >= today).sort((a,b) => a.date.localeCompare(b.date));
-  const past = events.filter(e => e.date < today).sort((a,b) => b.date.localeCompare(a.date));
+  // Show all events to their creator, but only published events to others
+  const visibleEvents = events.filter(e => e.published !== false || e.createdBy === userName);
+  const upcoming = visibleEvents.filter(e => e.date >= today).sort((a,b) => a.date.localeCompare(b.date));
+  const past = visibleEvents.filter(e => e.date < today).sort((a,b) => b.date.localeCompare(a.date));
 
   if (loading) {
     return (
@@ -287,38 +329,86 @@ export default function App() {
     const yesCount = ev.rsvps.filter(r => r.status === "yes").length;
     const sortedActivities = [...ev.activities].sort((a,b) => b.votes.length - a.votes.length);
     const isPast = ev.date < today;
+    const isOwner = ev.createdBy === userName;
+    const isPublished = ev.published !== false;
 
     return (
       <div className="app">
         <div className="detail-header fade-up">
-          <button className="btn btn-icon btn-secondary" onClick={() => { setCurrentView("list"); setConfirmDelete(null); }}>
+          <button className="btn btn-icon btn-secondary" onClick={() => { setCurrentView("list"); setConfirmDelete(null); setEditing(false); }}>
             <BackIcon size={18} />
           </button>
-          <div>
+          <div style={{flex:1}}>
             <div className="event-date" style={isPast ? {color:'var(--text3)'} : {}}>{fmtFull(ev.date)}</div>
             <h2 style={{fontSize:22}}>{ev.title}</h2>
           </div>
-        </div>
-
-        {/* Info */}
-        <div className="card fade-up delay-1" style={{marginBottom:16}}>
-          {ev.time && <p style={{fontSize:14,color:'var(--text2)',marginBottom:4}}>🕐 {ev.time}</p>}
-          {ev.location && <p style={{fontSize:14,color:'var(--text2)',marginBottom:4}}>📍 {ev.location}</p>}
-          {ev.notes && <p style={{fontSize:14,color:'var(--text2)',marginTop:8}}>{ev.notes}</p>}
-          <p style={{fontSize:12,color:'var(--text3)',marginTop:10}}>Created by {ev.createdBy}</p>
-
-          {/* Add to Calendar */}
-          <div className="cal-buttons">
-            <a className="cal-btn" href={buildGCalUrl(ev)} target="_blank" rel="noopener noreferrer">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="3" fill="#4285F4"/><rect x="3" y="3" width="9" height="9" rx="1" fill="#EA4335"/><rect x="12" y="3" width="9" height="9" rx="1" fill="#FBBC04"/><rect x="3" y="12" width="9" height="9" rx="1" fill="#34A853"/><rect x="12" y="12" width="9" height="9" rx="1" fill="#4285F4"/><rect x="6" y="6" width="12" height="12" rx="2" fill="white"/><text x="12" y="15.5" textAnchor="middle" fontSize="9" fontWeight="bold" fill="#4285F4">+</text></svg>
-              Google Calendar
-            </a>
-            <button className="cal-btn" onClick={() => downloadIcs(ev)}>
-              <GCalIcon size={16} />
-              Download .ics
+          {isOwner && !editing && (
+            <button className="btn btn-icon btn-secondary" onClick={() => startEditing(ev)} title="Edit event">
+              <EditIcon size={18} />
             </button>
-          </div>
+          )}
         </div>
+
+        {/* Unpublished banner */}
+        {!isPublished && (
+          <div className="card fade-up" style={{background:'#FFF8E1',borderColor:'#F0D060',marginBottom:16,display:'flex',alignItems:'center',gap:10,fontSize:14,color:'#8B7000'}}>
+            <EyeOffIcon size={18} color="#8B7000" />
+            <span style={{flex:1}}>This event is unpublished — only you can see it.</span>
+          </div>
+        )}
+
+        {/* Info — normal or edit mode */}
+        {editing && isOwner ? (
+          <div className="card fade-up delay-1" style={{marginBottom:16}}>
+            <div className="create-form">
+              <div className="form-group">
+                <label>What's the plan? *</label>
+                <input type="text" value={editTitle} onChange={e => setEditTitle(e.target.value)} autoFocus />
+              </div>
+              <div className="form-group">
+                <label>Date *</label>
+                <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Time</label>
+                <input type="text" placeholder="e.g. 10:00 AM" value={editTime} onChange={e => setEditTime(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Location</label>
+                <input type="text" placeholder="e.g. Maple Street Park" value={editLocation} onChange={e => setEditLocation(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Notes</label>
+                <textarea placeholder="Any details or things to bring..." value={editNotes} onChange={e => setEditNotes(e.target.value)} />
+              </div>
+              <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:4}}>
+                <button className="btn btn-sm btn-secondary" onClick={cancelEditing}>Cancel</button>
+                <button className="btn btn-sm btn-sage" onClick={() => saveEditing(ev.id)} disabled={!editTitle || !editDate} style={{opacity:(!editTitle||!editDate)?0.5:1}}>
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="card fade-up delay-1" style={{marginBottom:16}}>
+            {ev.time && <p style={{fontSize:14,color:'var(--text2)',marginBottom:4}}>🕐 {ev.time}</p>}
+            {ev.location && <p style={{fontSize:14,color:'var(--text2)',marginBottom:4}}>📍 {ev.location}</p>}
+            {ev.notes && <p style={{fontSize:14,color:'var(--text2)',marginTop:8}}>{ev.notes}</p>}
+            <p style={{fontSize:12,color:'var(--text3)',marginTop:10}}>Created by {ev.createdBy}</p>
+
+            {/* Add to Calendar */}
+            <div className="cal-buttons">
+              <a className="cal-btn" href={buildGCalUrl(ev)} target="_blank" rel="noopener noreferrer">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="3" fill="#4285F4"/><rect x="3" y="3" width="9" height="9" rx="1" fill="#EA4335"/><rect x="12" y="3" width="9" height="9" rx="1" fill="#FBBC04"/><rect x="3" y="12" width="9" height="9" rx="1" fill="#34A853"/><rect x="12" y="12" width="9" height="9" rx="1" fill="#4285F4"/><rect x="6" y="6" width="12" height="12" rx="2" fill="white"/><text x="12" y="15.5" textAnchor="middle" fontSize="9" fontWeight="bold" fill="#4285F4">+</text></svg>
+                Google Calendar
+              </a>
+              <button className="cal-btn" onClick={() => downloadIcs(ev)}>
+                <GCalIcon size={16} />
+                Download .ics
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* RSVP */}
         <div className="card fade-up delay-2 rsvp-section" style={{marginBottom:16}}>
@@ -390,9 +480,19 @@ export default function App() {
           )}
         </div>
 
-        {/* Delete */}
-        {ev.createdBy === userName && (
-          <div style={{marginTop:20}}>
+        {/* Owner actions: Unpublish + Delete */}
+        {isOwner && (
+          <div style={{marginTop:20,display:'flex',flexDirection:'column',gap:8}}>
+            {/* Unpublish / Republish */}
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{color: isPublished ? 'var(--text2)' : 'var(--sage)'}}
+              onClick={() => togglePublish(ev.id, isPublished)}
+            >
+              {isPublished ? <><EyeOffIcon size={14} /> Unpublish event</> : <><EyeIcon size={14} /> Republish event</>}
+            </button>
+
+            {/* Delete */}
             {confirmDelete === ev.id ? (
               <div className="delete-bar">
                 <span>Delete this event?</span>
@@ -487,8 +587,11 @@ export default function App() {
           <div className="section-label">Upcoming</div>
           <div className="event-list">
             {upcoming.map(ev => (
-              <div key={ev.id} className="card event-card upcoming" onClick={() => { setSelectedId(ev.id); setCurrentView("detail"); }}>
-                <div className="event-date">{fmt(ev.date)}</div>
+              <div key={ev.id} className="card event-card upcoming" onClick={() => { setSelectedId(ev.id); setCurrentView("detail"); setEditing(false); }}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <div className="event-date">{fmt(ev.date)}</div>
+                  {ev.published === false && <span style={{fontSize:11,fontWeight:600,color:'#8B7000',background:'#FFF8E1',padding:'2px 8px',borderRadius:10}}>Draft</span>}
+                </div>
                 <div className="event-title">{ev.title}</div>
                 {ev.location && <div style={{fontSize:13,color:'var(--text2)'}}>📍 {ev.location}</div>}
                 <div className="event-meta">
@@ -506,8 +609,11 @@ export default function App() {
           <div className="section-label">Past</div>
           <div className="event-list">
             {past.map(ev => (
-              <div key={ev.id} className="card event-card past" onClick={() => { setSelectedId(ev.id); setCurrentView("detail"); }} style={{opacity:0.7}}>
-                <div className="event-date">{fmt(ev.date)}</div>
+              <div key={ev.id} className="card event-card past" onClick={() => { setSelectedId(ev.id); setCurrentView("detail"); setEditing(false); }} style={{opacity:0.7}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <div className="event-date">{fmt(ev.date)}</div>
+                  {ev.published === false && <span style={{fontSize:11,fontWeight:600,color:'#8B7000',background:'#FFF8E1',padding:'2px 8px',borderRadius:10}}>Draft</span>}
+                </div>
                 <div className="event-title">{ev.title}</div>
                 <div className="event-meta">
                   <span><UsersIcon size={14} /> {ev.rsvps.filter(r=>r.status==='yes').length} attended</span>
